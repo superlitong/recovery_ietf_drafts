@@ -1,0 +1,519 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!DOCTYPE rfc SYSTEM "rfc2629.dtd" [
+<!ENTITY RFC2119 SYSTEM "http://xml2rfc.tools.ietf.org/public/rfc/bibxml/reference.RFC.2119.xml">
+<!ENTITY RFC2629 SYSTEM "http://xml2rfc.tools.ietf.org/public/rfc/bibxml/reference.RFC.2629.xml">
+<!ENTITY RFC5681 SYSTEM "http://xml2rfc.tools.ietf.org/public/rfc/bibxml/reference.RFC.5681.xml">
+<!ENTITY RFC9000 SYSTEM "http://xml2rfc.tools.ietf.org/public/rfc/bibxml/reference.RFC.9000.xml">
+<!ENTITY RFC9002 SYSTEM "http://xml2rfc.tools.ietf.org/public/rfc/bibxml/reference.RFC.9002.xml">
+<!ENTITY RFC8985 SYSTEM "http://xml2rfc.tools.ietf.org/public/rfc/bibxml/reference.RFC.8985.xml">
+<!ENTITY RFC6675 SYSTEM "http://xml2rfc.tools.ietf.org/public/rfc/bibxml/reference.RFC.6675.xml">
+<!ENTITY RFC5827 SYSTEM "http://xml2rfc.tools.ietf.org/public/rfc/bibxml/reference.RFC.5827.xml">
+]>
+
+<?rfc strict="yes" ?>
+<?rfc toc="yes"?>
+<?rfc tocdepth="4"?>
+<?rfc symrefs="yes"?>
+<?rfc sortrefs="yes"?>
+<?rfc compact="no"?>
+<?rfc subcompact="no" ?>
+<rfc ipr='trust200902' category="exp" docName="draft-wu-moq-recovery-for-video-streaming-00">
+  <front>
+    <title abbrev="QUIC Recovery for Video Streaming">Enhanced QUIC Recovery for Video Streaming</title>
+    <author fullname="Bo Wu" initials="B."  surname="Wu">
+      <organization>Tencent</organization>
+      <address>
+        <postal>
+          <street>Tencent Headquarters Building</street>
+          <street>Haidian District</street>
+		  <street>Beijing</street>
+          <street>China</street>
+        </postal>
+        <email>brynwu@tencent.com</email>
+      </address>
+    </author>
+
+    <author fullname="Tong Li" initials="T." surname="Li">
+      <organization>Renmin University of China</organization>
+      <address>
+        <postal>          
+          <street>No. 59, Zhongguancun Street</street>
+          <street>Haidian District</street>
+		      <street>Beijing</street>
+          <street>China</street>
+        </postal>
+        <email>tong.li@ruc.edu.cn</email>
+      </address>
+    </author>
+
+    <author fullname="Cheng Luo" initials="C." surname="Luo">
+      <organization>Tencent</organization>
+      <address>
+        <postal>          
+          <street>Jindiwei Center, Yuehai Street</street>
+          <street>Nanshan District</street>
+		      <street>Shenzhen</street>
+          <street>China</street>
+        </postal>
+        <email>lancelotluo@tencent.com</email>
+      </address>
+    </author>
+
+    <author fullname="Jibing Lou" initials="J." surname="Lou">
+      <organization>Tencent</organization>
+      <address>
+        <postal>          
+          <street>Jindiwei Center, Yuehai Street</street>
+          <street>Nanshan District</street>
+		      <street>Shenzhen</street>
+          <street>China</street>
+        </postal>
+        <email>lollylou@tencent.com</email>
+      </address>
+    </author>
+
+    <author fullname="Ke Xu" initials="K." surname="Xu">
+      <organization>Tsinghua University</organization>
+      <address>
+        <postal>          
+          <street>30 Shuangqing Road</street>
+          <street>Haidian District</street>
+		      <street>Beijing</street>
+          <street>China</street>
+        </postal>
+        <email>xuke@tsinghua.edu.cn</email>
+      </address>
+    </author>
+
+    <date day="08" month="November" year="2025"/>
+    <area>wit</area>
+    <workgroup>Media Over QUIC</workgroup>
+ 
+    <abstract>
+      <t> 
+      The current loss recovery in QUIC provides reliable delivery but is not optimized for latency, potentially hindering time-sensitive applications.
+      The document analyzes the issues caused by the current QUIC recovery scheme during live video streaming and then proposes an enhanced QUIC recovery mechanism that leverages additional loss retransmissions for optimizing client-side QoE. 
+      At a high level, the QUIC sender performs additional recovery logic when transport runs into application limited state, which is for the lost data that has been retransmitted before but has not been acknowledged yet. 
+      This mechanism can act as a supplement to the existing recovery scheme that performs immediate loss retransmissions once a packet is detected lost. 
+      </t>
+    </abstract>
+  </front>
+
+  <middle>
+    <section title="Requirements Language">
+        <t>The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in <xref
+        target="RFC2119">RFC 2119</xref>.</t>
+    </section>
+
+    <section title="Problem Statement">
+      <t>
+      QUIC-powered traffic transmission introduces an obvious optimization for the performance of live video streaming. 
+      The existing design logic of QUIC recovery enables to perform data retransmission once a packet is detected lost while ignoring the quality of loss recovery, which can not well adapt to the timeliness requirement of live video services. 
+      Specially, if a piece of data is detected lost more than once, e.g., due to network congestions, the QUIC client has to keep waiting until the retransmitted lost data is successfully received. 
+      During this time, the follow-up data of this video stream can not be uploaded to the player buffer even though the related packets have already arrived at the QUIC client. 
+      In this case, the client-side QoE can be further deteriorated (e.g., video freezing occurs) when the data in application queue is consumed. 
+      The root cause of the above issue is the existing loss recovery scheme actually provide few optimizations for retransmission quality so that the lost data might not be received by clients in time. 
+      </t>
+	  </section>
+	
+	  <section title="Overview of Standards on QUIC Loss Recovery">
+
+      <t>
+      QUIC is an UDP-based reliable transport protocol, which can provide secure and quick traffic transmissions for general-purpose Internet services <xref target="RFC9000"></xref>. 
+      Similar to common TCP designs, QUIC senders should also perform loss detections and recovery from loss of data while taking appropriate congestion control action. 
+      Once a packet is detected lost, a QUIC sender requires to immediately recover from that lost in another packet with a new and increased packet number, which can be used to accurately distinguish whether the potential lost data is caused by transmitted or retransmitted packets. 
+      </t>
+
+      <t>
+      The exist loss recovery scheme of QUIC protocol is detailed in <xref target="RFC9002"></xref>, in which acknowledgments can be used to detect lost packets and a PTO (probe timeout) will be employed to ensure acknowledgments are received. 
+      Besides, the spirits of TCP's Fast Retransmit <xref target="RFC5681"></xref>, Early Retransmit <xref target="RFC5827"></xref>, Forward Acknowledgement <xref target="FACK"></xref>, SACK loss recovery <xref target="RFC6675"></xref> and RACK-TLP <xref target="RFC8985"></xref> are also implemented during QUIC recovery for the lost data. 
+      </t>
+
+      <t>
+      Even though the immediate loss recovery can reduce the waiting time of receivers for the lost data, the retransmitted packets might fail to reach the clients in time due to changeable network status. 
+      For example, if the resent data is lost again during its retransmission, the QUIC receiver has to wait for at least another 1 RTT and might suffer from the deteriorated QoE such as video freezing. 
+      This is because the follow-up data of this stream can not be delivered to the application layer while the remaining data previously cached in player buffer is actually continuously consumed. 
+      Once the remaining data is exhausted after a long waiting time, deteriorated QoE will occur on the QUIC receiver side. 
+      The current QUIC recovery scheme lacks further optimizations for the quality of loss recovery, which might introduce a long waiting time for the lost data, especially when the retransmitted packet is lost again. 
+      This document mainly focuses on designing an enhanced loss recovery mechanism to reduce the receiver-side waiting time for the lost data, which can be leveraged to optimize the timeliness of live video streaming. 
+      </t>
+
+	  </section>
+	
+     <section title="Optimized Loss Recovery for Live Streaming">
+
+		 <section title="Requirements">
+
+      <section title="Endpoint and Network Changes">
+		
+             <t>
+             This mechanism only requires to make some changes on QUIC sender side that should performs additional loss recovery when application limited. 
+             There is no need to make some modifications for QUIC receivers that still obeys the logic declared in common QUIC designs. 
+             </t>
+
+            <t>
+            The existing network equipments (e.g., routers and switches) and the format of QUIC packets do not require any changes to match the enhanced loss recovery proposed in this document. 
+            </t>
+	
+      </section>
+
+      <section title="Compatibility and Suitability">
+
+      <t>
+      This mechanism is compatible with the existing loss detection and recovery scheme, in which supplemental loss recoveries are employed to optimize the receiver-side waiting time for the lost data.  
+      </t>
+
+      <t>
+      This mechanism is suitable for optimizing the receiver-side QoE of live video streaming that has the following characteristics: 
+      </t>
+
+      <ol>
+        <li>
+        Timeliness requirement: the live video services have more strict requirements for the timeliness of traffic data, in which the lost data should be successfully transmitted to its receiver within a period of time. 
+        Otherwise, the deteriorated QoE such as video freezing will occur on the receiver side. 
+        </li>
+        <li>
+        Application limitation: the live video streaming often makes senders become application-limited, i.e., there is no data to send. 
+        This is because the data of live video is encoded  with a configured frame rate, which actually introduces a certain time interval between adjacent frames. 
+        When a frame has been sent and next frame has not yet been generated, the sender will become application-limited. 
+        </li>
+      </ol>
+
+      <t>
+      This mechanism supports the existing loss recovery scheme that relies on retransmitting lost data, sending an updated frame or discarding the frame, see Section 13.3 of <xref target="RFC9000"></xref>. 
+      </t>
+
+      </section>
+
+	     </section>
+
+
+
+     	<section title="Application Limit Identification">
+
+		    <t>
+        During live video streaming, QUIC senders will frequently become application-limited, in which no data can be obtained temporarily for continuous transmissions. 
+        This is because the time interval (T_interval) between the generations of two adjacent frames is ubiquitous, which is introduced by the configured frame rate (F_rate) for frame encoding:
+        </t>
+
+        <t>
+        T_interval = 1 / F_rate
+        </t>
+
+        <t>
+        From the perspective of senders, T_interval reflects the sending time interval between two adjacent frames. 
+        </t>
+
+        <t>
+        The cost time (T_cost) that a QUIC sender takes to send the current frame and recovers from previous loss can be calculated using the valide transport speed (S_trans) and the size of each encoded frame (S_frame):
+        </t>
+
+        <t>
+        T_cost = S_frame / S_trans
+        </t>
+
+        <t>
+        The QUIC sender will become application-limited if the following condition is satisfied: 
+        </t>
+
+        <t>
+        T_cost &lt; T_interval
+        </t>
+
+        <t>
+        Note that S_trans is bounded by the current maximum available bandwidth (max_bw) and S_frame can be obtained from video bitrate (B_video) and F_rate, as follows: 
+        </t>
+
+        <t>
+        S_frame = B_video / F_rate
+        </t>
+
+        <t>
+        Therefore, the following condition can also cause QUIC senders to be application-limited: 
+        </t>
+
+        <t>
+        B_video &lt; S_trans
+        </t>
+
+        <t>
+        For example, 60-fps F_rate will introduce a new video frame every 16.7 ms (i.e., T_interval = 16.7 ms) on average, where the value of B_video is assumed as 2 Mbps. 
+        If S_trans is larger than 2 Mbps, QUIC senders will frequently step to the application-limited status, in which they only keep waiting for the next newly encoded frame. 
+        </t>
+
+        <t>
+        In this document, QUIC sender can identify whether it has become application-limited, which has already been supported in the existing QUIC solutions, such as <xref target="RFC9002"></xref> and <xref target="RATE_ESTIMATION"></xref>.  
+        </t>
+      </section>
+
+      <section title="Unacked Lost Packet Queue">
+		
+    		<t>
+         In this mechanism, a QUIC sender requires to record the lost data for each connection, which has already been retransmitted but not been acknowledged by its receiver. 
+         To achieve the above function, an additional data queue (called Queue_unack_loss) should be established and maintained by QUIC senders. 
+         The data in Queue_unack_loss will be leveraged to enhance the performance of QUIC recovery and optimize receiver-side QoE of timeliness-sensitive live streaming. 
+        </t>
+        
+        <section title="Queue_unack_loss Establishment and Release">
+		
+        <t>
+        The Queue_unack_loss for each QUIC connection will be established and released by QUIC senders if it meets one of the following conditions:
+        </t>
+
+        <ol>
+          <li>
+          A QUIC sender will establish Queue_unack_loss when a QUIC connection is created, and release this queue after closing this connection. 
+          </li>
+
+          <li>
+          A QUIC sender will establish Queue_unack_loss when any packet loss is detected and no Queue_unack_loss for this QUIC connection has already been established at the current moment. 
+          If there is no lost data that has not been acknowledged by QUIC receiver (i.e., Queue_unack_loss is empty), the Queue_unack_loss created previously will be released by the QUIC sender. 
+          </li>
+        </ol>
+	
+        </section>
+
+        <section title="Queue_unack_loss Maintenance">
+		
+        <t>
+        The Queue_unack_loss for a QUIC connection will be maintained on the QUIC-sender side if any lost data is newly detected or any loss retransmission is acknowledged. 
+        Overall, the data in Queue_unack_loss should be updated when it meets one of the following conditions:
+        </t>
+
+        <ol>
+        <li>
+        If a packet is detected lost and the packet data has not existed in Queue_unack_loss, the resent data will be added to the end of Queue_unack_loss after its retransmission. 
+        </li>
+
+        <li>
+        If a packet is detected lost and the packet data has already existed in Queue_unack_loss, the resent data will be added to the end of Queue_unack_loss after its retransmission. 
+        At the same time, this lost data of this packet will be deleted from Queue_unack_loss. 
+        </li>
+
+        <li>
+        If the lost data recorded in Queue_unack_loss is retransmitted by QUIC sender, it will be moved (from the middle or the head) to the end of Queue_unack_loss. 
+        Note that the data location changes in Queue_unack_loss can be achieved by deleting and adding operations. 
+        </li>
+
+        <li>
+        If the lost data is successfully recovered (i.e., acknowledged by its QUIC receiver), it will be deleted from Queue_unack_loss that is operated by its QUIC sender. 
+        </li>
+        </ol>
+
+        <t>
+        As <xref target="queue_unack_loss_update" format="default"/> shows, Queue_unack_loss records four lost data (i.e., Loss 0 ~ 3) with the location of 0 ~ 3. 
+        When Loss 0 is retransmitted again, the QUIC sender will remove it from location 1 to 4. 
+        At the same time, if a retransmitted packet is acknowledged by receiver, the data in this packet will be deleted from Queue_unack_loss. 
+                 <figure title="Queue_unack_loss update" anchor="queue_unack_loss_update">
+                     <artwork name="" type="" align="left" alt=""><![CDATA[
+Location 4           3           2           1           0    Head
++----------------------------------------------------------------+
+|   +--------+  +--------+  +--------+  +--------+  +--------+   |
+|   | Loss 0 |  | Loss 3 |  | Loss 2 |  | Loss 1 |  |        |   |
+|   +----^---+  +--------+  +--------+  +--------+  +----+---+   |
++--------|-----------------------------------------------|-------+
+         +-----------------------------------------------+
+]]></artwork>
+                 </figure></t>
+
+        <t>
+        In this mechanism, any two packets (e.g., packet A and B) are strongly correlated if packet B acts as an recovery packet for the loss of packet A. 
+        In QUIC protocol, the data of packet B might differ from the data of packet A, as their sender could send an updated frame packeted in packet B for recovering the loss of packet A. 
+        </t>
+
+        <t>
+        The key rules for Queue_unack_loss maintenance can be described as follows: 
+        </t>
+
+        <ol>
+        <li>
+        Queue_unack_loss only records the resent but unacknowledged data. 
+        </li>
+        <li>
+        The data in Queue_unack_loss is different from each other, whose corresponding packets can not be strongly correlated.
+        </li>
+        <li>
+        The data in Queue_unack_loss is sorted based on the time of their most recent retransmissions, in which the latest resent data is at the end of this queue. 
+        </li>
+        </ol>
+	
+        </section>
+	
+      </section>
+		
+		 <section title="Sender-side Operations">
+			
+			 <section title="Additional Loss Recovery">
+
+        <t>
+        In this mechanism, the existing QUIC-based traffic transmission <xref target="RFC9000"></xref> and loss recovery scheme <xref target="RFC9002"></xref> will be performed as usual, in which the lost data will be retransmitted immediately once it is detected lost. 
+        Meanwhile, QUIC senders continuously maintain the status of Queue_unack_loss and keep identifying whether it becomes application-limited during live video streaming in each connection.  
+        If application-limited, a QUIC sender will actively retransmit the lost data in the order of data locations in Queue_unack_loss. 
+        Specially, the lost data at the head of Queue_unack_loss will be fetched to perform an additional loss recovery and then be moved to the end of Queue_unack_loss. 
+        When not application limited (app_unlimited), the QUIC sender will employ the existing QUIC protocol to send (or resend) the next traffic (lost) data of live video services. 
+        </t>
+			 
+			     <t>The workflow of this mechanism is shown in <xref target="ack-intensity-format" format="default"/>.
+                 <figure title="The Mechanism Workflow" anchor="ack-intensity-format">
+                     <artwork name="" type="" align="left" alt=""><![CDATA[
+                    |
+    +---------------+----------------+
+    |    Traffic (re)transmission    |<--+
+    +---------------+----------------+   |
+                    |                    |
+    +---------------+----------------+   |
++-->|    Maintain Queue_unack_loss   |   | No
+|   +---------------+----------------+   |
+|                   |                    |
+|   +---------------+----------------+   |
+|   |      Application-limited ?     |---+
+|   +---------------+----------------+
+|                   | Yes
+|   +---------------+----------------+
+|   | Fetch lost data from the head  |
+|   |of the head of Queue_unack_loss |
+|   +---------------+----------------+
+|                   |
+|   +---------------+----------------+
+|   |   Additional loss recovery     |
+|   +---------------+----------------+
+|                   |
++-------------------+
+]]></artwork>
+                 </figure></t>
+
+
+	    </section>	
+
+			 <section title="No Lost Data">
+           <t> 
+           When application limited, QUIC senders firstly check whether Queue_unack_loss is established or whether any lost and unacknowledged data exists in this queue. 
+           If there is no data recorded in this queue or this queue has not been established, QUIC senders will not perfrom additional recoveries for data loss. 
+           </t>
+       </section>
+
+       <section title="Additional Recovery Times">
+
+          <t>
+          In this mechanism, the QUIC sender performs additional loss recovery at most once for each lost data every time this sender is application limited. 
+          In other words, the lost data recorded in Queue_unack_loss will be retransmitted only once or not be retransmitted between two adjacent timestamps when a QUIC sender starts and ends to become application-limited (app_limited). 
+          As <xref target="application-limit-duration" format="default"/> shows, the QUIC sender keeps application-limited from t1 to t2. 
+          In this duration, the data can be taken from the head of Queue_unack_loss and then be used to perfrom further recovery from the loss. 
+          If all data has been retransmitted once during this time, QUIC sender will wait for another newly detected loss or being not application-limited. 
+          If there is remaining data in Queue_unack_loss that has not been retransmitted when not application-limited, these data will be leveraged to loss recovery when the sender becomes application-limited again.           
+          </t>
+          <t>
+                 <figure title="The Timing for Additional Loss Recovery" anchor="application-limit-duration">
+                     <artwork name="" type="" align="left" alt=""><![CDATA[
++----------------------+
+|   Queue_unack_loss   |-------+
++----------------------+       |
+                  +------------+-------------+
+                  | Additional loss recovery |
+                  +------------+-------------+
+    +---------------------+    |    +---------------------+
+    |    App_unlimited    |    |    |    App_unlimited    |   
+----+---------------------+----+----+---------------------+------>
+    t0                    t1        t2                    t3  time
+]]></artwork>
+                 </figure></t>
+   	
+	    </section>	
+
+	<section title="Flow Control and Congestion Control">
+ 
+             <t>
+             The additional loss recovery complies with the flow control scheme in the existing QUIC protocol. 
+             </t>
+
+             <t>
+             The additional loss recovery scheme employs the data in Queue_unack_loss for optimizing the timeliness of live video streaming.
+             This could introduce worse network congestions on traffic forwarding path, which will lower the transmission performance of next video streaming. 
+             In order to avoid the above issue, this mechanism enables additional loss recovery to obey the congestion control of the current QUIC connection. 
+             For example, the congestion window (cwnd) and pacing rate should not exceed the corresponding values when the QUIC sender begins to be application-limited. 
+             </t>
+
+	</section>
+
+	     </section>
+	     	
+	</section>
+		
+	<section title="Security Considerations">
+	    <t>
+      This proposal does not introduce any changes to the security of the existing QUIC solutions or congestion control scheme. 
+      </t>	
+	</section>
+	
+	<section title="IANA Considerations">
+	    <t> 
+      No request of IANA is made in this documents. 
+      </t>
+
+      <t>
+      Note to RFC Editor: this section may be removed on publication as an RFC.
+      </t>
+	</section>
+
+  <section title="Acknowledgments">
+	    <t> 
+      We would like to thank Fuyu Wang, Changkui Ouyang, and Xu Yan for their feedback and suggestions. 
+      </t>
+	</section>
+		
+  </middle>
+
+  <back>
+
+
+    <references title="Normative References">
+        &RFC2119;
+        &RFC5681;
+        &RFC9000;
+        &RFC9002;   
+        &RFC8985;
+        &RFC6675;
+        &RFC5827;
+    </references>
+	  
+    <references title="Informative References">
+
+
+
+        <reference anchor="FACK">
+          <front>
+            <title>Forward Acknowledgement: Refining TCP Congestion Control</title>           
+            <author initials="M." surname="Matthew" fullname="Matthew Mathis" role="editor">
+              <organization>UPC</organization>
+            </author>
+            <author initials="J." surname="Mahdavi" fullname="Jamshid Mahdavi" role="editor">
+              <organization>Pittsburgh Supercomputing Center</organization>
+            </author>
+            <date year="1996" month="August"/>
+          </front>
+		  <seriesInfo name="ACM SIGCOMM Computer Communication Review, DOI 10.1145/248157.248181" value="https://doi.org/10.1145/248157.248181"/>
+        </reference>
+
+        <reference anchor="RATE_ESTIMATION">
+          <front>
+            <title>Delivery Rate Estimation</title>           
+            <author initials="Y." surname="Cheng" fullname="Yuchung Cheng" role="editor">
+              <organization>Google</organization>
+            </author>
+            <author initials="N." surname="Cardwell" fullname="Neal Cardwell" role="editor">
+              <organization>Google</organization>
+            </author>
+            <author initials="S." surname="Hassas Yeganeh" fullname="Soheil Hassas Yeganeh" role="editor">
+              <organization>Google</organization>
+            </author>
+            <author initials="V." surname="Jacobson" fullname="Van Jacobson" role="editor">
+              <organization>Google</organization>
+            </author>
+            <date year="2022" month="September" day="8"/>
+          </front>
+		  <seriesInfo name="Internet-Draft" value="draft-cheng-iccrg-delivery-rate-estimation-02"/>
+        </reference>
+    </references>
+  </back>
+</rfc>

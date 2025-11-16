@@ -1,2 +1,5 @@
-# recovery_ietf_drafts
-The document analyzes the issues caused by the current    QUIC recovery scheme during live video streaming and then proposes an    enhanced QUIC recovery mechanism that leverages additional loss    retransmissions for optimizing client-side QoE.
+# standards
+
+Starndard drafts source files for [Enhanced QUIC Recovery for Video Streaming](https://datatracker.ietf.org/doc/html/draft-wu-moq-recovery-for-video-streaming).
+
+Abstract: The current loss recovery in QUIC provides reliable delivery but is not optimized for latency, potentially hindering time-sensitive applications. The document analyzes the issues caused by the current QUIC recovery scheme during live video streaming and then proposes an enhanced QUIC recovery mechanism that leverages additional loss retransmissions for optimizing client-side QoE. At a high level, the QUIC sender performs additional recovery logic when transport runs into application limited state, which is for the lost data that has been retransmitted before but has not been acknowledged yet. This mechanism can act as a supplement to the existing recovery scheme that performs immediate loss retransmissions once a packet is detected lost.
